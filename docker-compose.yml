@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: 'postgres:16.3'
+    env_file:
+      - .postgres_env
+    volumes:
+      - ./db-data/:/var/lib/postgresql/data/
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - 8888:5432
+  server:
+    env_file:
+      - .server_env
+    build:
+      dockerfile: './ServerDockerfile'
+  bot:
+    env_file:
+      - .bot_env
+    build:
+      dockerfile: './BotDockerfile'
