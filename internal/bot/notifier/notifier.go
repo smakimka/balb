@@ -41,54 +41,37 @@ func (n *Notifier) Run(ctx context.Context) {
 }
 
 func (n *Notifier) inviteGuests(ctx context.Context) {
-	birthdays, err := n.s.GetUnFinishedBirthdays(ctx)
+	invites, err := n.s.GetNotSentInvites(ctx)
 	if err != nil {
-		log.Err(err).Msg("error getting unfinished birthdays")
+		log.Err(err).Msg("error getting unfinished invites")
 		return
 	}
 
-	for _, birthday := range birthdays {
-		// Это грустно, но просто, наверное, не страшно, не так уж их и много, правда ведь?
-		// sleep до секунды потому что телеграм рекоммендует при рассылках не спамить и отправлять ~ по 1 сообщению в секунду
-		// https://core.telegram.org/bots/faq Пункт Broadcasting to Users
-		for _, guestID := range birthday.GuestIDs {
-			start := time.Now()
+	for _, invite := range invites {
+		start := time.Now()
 
-			beenDone := false
-			for _, doneId := range birthday.DoneIDs {
-				if doneId == guestID {
-					beenDone = true
-				}
-			}
-
-			if beenDone {
-				continue
-			}
-
-			chatID, err := strconv.Atoi(guestID)
-			if err != nil {
-				log.Err(err).Msg("error convering chat id, should be impossible")
-				continue
-			}
-
-			msg := tgbotapi.NewMessage(
-				int64(chatID),
-				fmt.Sprintf("Скоро (%s) у %s день рождения, вы подписаны, поэтому заходите %s", birthday.Date.Format("02.01"), birthday.FIO, birthday.InviteLink),
-			)
-			_, err = n.a.Send(msg)
-			if err != nil {
-				log.Err(err).Msg("error sending invite")
-				continue
-			}
-
-			elapsed := time.Since(start)
-			if elapsed < time.Second {
-				time.Sleep(time.Second - elapsed)
-			}
-			birthday.DoneIDs = append(birthday.DoneIDs, guestID)
+		chatID, err := strconv.Atoi(invite.ChatID)
+		if err != nil {
+			log.Err(err).Msg("error convering chat id, should be impossible")
+			continue
 		}
 
-		if err = n.s.UpdateDoneIDS(ctx, birthday.ID, birthday.DoneIDs); err != nil {
+		msg := tgbotapi.NewMessage(
+			int64(chatID),
+			fmt.Sprintf("Скоро (%s) у %s день рождения, вы подписаны, поэтому заходите %s", invite.Date.Format("02.01"), invite.FIO, invite.Link),
+		)
+		_, err = n.a.Send(msg)
+		if err != nil {
+			log.Err(err).Msg("error sending invite")
+			continue
+		}
+
+		elapsed := time.Since(start)
+		if elapsed < time.Second {
+			time.Sleep(time.Second - elapsed)
+		}
+
+		if err = n.s.UpdateInviteStatus(ctx, invite.ID, storage.InviteDone); err != nil {
 			log.Err(err).Msg("error remembering sent invites, bad")
 		}
 	}

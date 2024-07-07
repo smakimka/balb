@@ -107,6 +107,18 @@ func (b *Bot) birthday(ctx context.Context, message *tgbotapi.Message) {
 		fmt.Sprintf("Ссылка в чате по коду %s успешно создана, рассылка приглашений скоро начнется", message.CommandArguments()),
 	)
 	b.a.Send(msg)
+
+	birthday, err := b.s.GetBirthdayByCode(ctx, message.CommandArguments())
+	if err != nil {
+		log.Err(err).Msg("error getting data on group message")
+		return
+	}
+
+	msg = tgbotapi.NewMessage(
+		message.Chat.ID,
+		fmt.Sprintf("Это беседа дня рождения %s (%s) wishlist:\n%s", birthday.FIO, birthday.Date.Format("02.01"), birthday.Wishlist),
+	)
+	b.a.Send(msg)
 }
 
 func (b *Bot) subscribe(_ context.Context, message *tgbotapi.Message) {

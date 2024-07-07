@@ -34,9 +34,18 @@ func (s *PGStorage) Init(ctx context.Context) error {
         invite_link text,
         fio text,
         birthday timestamp,
-        wishlist text,
-        chat_ids text[],
-        done_ids text[]
+        wishlist text
+    )`)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `create table if not exists invites (
+        id serial primary key,
+        birthday_id int references birthdays(id),
+        chat_id text,
+        status int,
+        constraint c_birthdayinvite_uq unique (birthday_id, chat_id)
     )`)
 	if err != nil {
 		return err
@@ -56,8 +65,20 @@ func (s *PGStorage) CreateBirthday(ctx context.Context, r *model.NotifyRequest) 
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `insert into birthdays (wishlist, fio, birthday, chat_ids, done_ids) 
-    values ($1, $2, $3, $4, $5)`, r.Wishlist, r.FIO, r.Birthday, r.Users, []string{})
+	var birthdayID int
+	row := tx.QueryRow(ctx, `insert into birthdays as b (wishlist, fio, birthday) 
+    values ($1, $2, $3) returning b.id`, r.Wishlist, r.FIO, r.Birthday)
+	if err = row.Scan(&birthdayID); err != nil {
+		return err
+	}
+
+	for _, user := range r.Users {
+		_, err := tx.Exec(ctx, `insert into invites (birthday_id, chat_id, status) 
+        values ($1, $2, $3)`, birthdayID, user, InviteNotSent)
+		if err != nil {
+			return err
+		}
+	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return err
@@ -69,7 +90,7 @@ func (s *PGStorage) CreateBirthday(ctx context.Context, r *model.NotifyRequest) 
 func (s *PGStorage) GetNewBirthdays(ctx context.Context) ([]BirthdayData, error) {
 	res := []BirthdayData{}
 
-	rows, err := s.p.Query(ctx, `select id, fio, birthday, wishlist, chat_ids from birthdays 
+	rows, err := s.p.Query(ctx, `select id, fio, birthday, wishlist from birthdays 
     where code like ''`)
 	if err != nil {
 		return res, err
@@ -79,7 +100,7 @@ func (s *PGStorage) GetNewBirthdays(ctx context.Context) ([]BirthdayData, error)
 	for rows.Next() {
 		data := BirthdayData{}
 
-		if err = rows.Scan(&data.ID, &data.FIO, &data.Date, &data.Wishlist, &data.GuestIDs); err != nil {
+		if err = rows.Scan(&data.ID, &data.FIO, &data.Date, &data.Wishlist); err != nil {
 			return res, err
 		}
 
@@ -93,22 +114,37 @@ func (s *PGStorage) GetNewBirthdays(ctx context.Context) ([]BirthdayData, error)
 	return res, nil
 }
 
-func (s *PGStorage) GetUnFinishedBirthdays(ctx context.Context) ([]BirthdayData, error) {
-	res := []BirthdayData{}
+func (s *PGStorage) GetBirthdayByCode(ctx context.Context, code string) (BirthdayData, error) {
+	res := BirthdayData{}
 
-	rows, err := s.p.Query(ctx, `select id, fio, birthday, chat_id, invite_link, wishlist, chat_ids, done_ids from birthdays
-    where chat_id is not null and (array_length(done_ids, 1) is null or array_length(done_ids, 1) < array_length(chat_ids, 1))`)
+	row := s.p.QueryRow(ctx, `select id, fio, birthday, wishlist, chat_id from birthdays 
+    where code like $1`, code)
+
+	if err := row.Scan(&res.ID, &res.FIO, &res.Date, &res.Wishlist, &res.ChatID); err != nil {
+		return res, err
+	}
+
+	return res, nil
+}
+
+func (s *PGStorage) GetNotSentInvites(ctx context.Context) ([]InviteData, error) {
+	res := []InviteData{}
+
+	rows, err := s.p.Query(ctx, `select i.id, b.fio, b.birthday, i.chat_id, b.invite_link 
+    from invites as i
+    join birthdays as b on b.id = i.birthday_id
+    where i.status = $1 and b.invite_link is not null`, InviteNotSent)
 	if err != nil {
 		return res, err
 	}
 
 	for rows.Next() {
-		birthday := BirthdayData{}
-		if err = rows.Scan(&birthday.ID, &birthday.FIO, &birthday.Date, &birthday.ChatID, &birthday.InviteLink, &birthday.Wishlist, &birthday.GuestIDs, &birthday.DoneIDs); err != nil {
+		invite := InviteData{}
+		if err = rows.Scan(&invite.ID, &invite.FIO, &invite.Date, &invite.ChatID, &invite.Link); err != nil {
 			return res, err
 		}
 
-		res = append(res, birthday)
+		res = append(res, invite)
 	}
 	if err = rows.Err(); err != nil {
 		return res, err
@@ -161,19 +197,19 @@ func (s *PGStorage) UpdateLinkAndChatIDByCode(ctx context.Context, code string, 
 	return nil
 }
 
-func (s *PGStorage) UpdateDoneIDS(ctx context.Context, birthdayID int, doneIDS []string) error {
+func (s *PGStorage) UpdateInviteStatus(ctx context.Context, inviteID int, status int) error {
 	tx, err := s.p.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	cmd, err := tx.Exec(ctx, `update birthdays set done_ids = $1 where id = $2`, doneIDS, birthdayID)
+	cmd, err := tx.Exec(ctx, `update invites set status = $1 where id = $2`, status, inviteID)
 	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
-		return ErrBirthdayNotFound
+		return ErrInviteNotFound
 	}
 
 	if err = tx.Commit(ctx); err != nil {

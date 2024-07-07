@@ -9,6 +9,13 @@ import (
 )
 
 var ErrBirthdayNotFound = errors.New("birthday not found")
+var ErrInviteNotFound = errors.New("invite not found")
+
+const (
+	InviteNotSent   = iota
+	InviteDone      = iota
+	InviteCancelled = iota
+)
 
 type BirthdayData struct {
 	ID         int
@@ -18,15 +25,22 @@ type BirthdayData struct {
 	ChatID     string
 	Code       string
 	InviteLink string
-	GuestIDs   []string
-	DoneIDs    []string
+}
+
+type InviteData struct {
+	ID     int
+	Date   time.Time
+	FIO    string
+	ChatID string
+	Link   string
 }
 
 type Storage interface {
-	UpdateDoneIDS(ctx context.Context, birthdayID int, doneIDS []string) error
+	UpdateInviteStatus(ctx context.Context, inviteID int, status int) error
 	UpdateLinkAndChatIDByCode(ctx context.Context, code string, chatID string, link string) error
 	GetNewBirthdays(ctx context.Context) ([]BirthdayData, error)
-	GetUnFinishedBirthdays(ctx context.Context) ([]BirthdayData, error)
+	GetBirthdayByCode(ctx context.Context, code string) (BirthdayData, error)
+	GetNotSentInvites(ctx context.Context) ([]InviteData, error)
 	CreateBirthday(ctx context.Context, r *model.NotifyRequest) error
 	SetCode(ctx context.Context, birthdayID int, code string) error
 }
